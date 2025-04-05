@@ -1,8 +1,8 @@
 package com.example.horse_racing.Servlets;
 
-import com.google.gson.Gson;
-import com.google.gson.JsonObject;
+import com.example.horse_racing.Models.MakeBetRequest;
 import com.example.horse_racing.Utils.DBUtil;
+import com.google.gson.Gson;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.HttpServlet;
@@ -11,10 +11,11 @@ import jakarta.servlet.http.HttpServletResponse;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.Statement;
+import java.sql.Timestamp;
 
 @WebServlet(name = "MakeBetServlet", urlPatterns = "/make-bet")
 public class MakeBetServlet extends HttpServlet {
@@ -27,48 +28,94 @@ public class MakeBetServlet extends HttpServlet {
         response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
         response.setHeader("Access-Control-Allow-Credentials", "true");
 
-        StringBuilder sb = new StringBuilder();
-        try (BufferedReader reader = request.getReader()){
-            String line;
-            while ((line = reader.readLine()) != null) {
-                sb.append(line);
-            }
-        }
+        try (BufferedReader reader = request.getReader()) {
+            Gson gson = new Gson();
+            MakeBetRequest betRequest = gson.fromJson(reader, MakeBetRequest.class);
 
-        Gson gson = new Gson();
-        JsonObject json = gson.fromJson(sb.toString(), JsonObject.class);
+            int betId = betRequest.getBetId();
+            String email = betRequest.getEmail();
+            BigDecimal betSum = betRequest.getSum();
 
-        int betId = json.get("betId").getAsInt();
-        int userId = json.get("userId").getAsInt();
-        String state = json.get("state").getAsString();
-        int sum = json.get("sum").getAsInt();
+            try (Connection conn = DBUtil.getConnection()) {
+                conn.setAutoCommit(false);
 
-        try (Connection conn = DBUtil.getConnection()){
-            String insertPlaceBetQuery = "INSERT INTO place_bets (bet_id, user_id, state, sum, create_at) " +
-                    "VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)";
-            int placedBetId;
-            try (PreparedStatement stmt = conn.prepareStatement(insertPlaceBetQuery, Statement.RETURN_GENERATED_KEYS)) {
-                stmt.setInt(1, betId);
-                stmt.setInt(2, userId);
-                stmt.setString(3, state);
-                stmt.setInt(4, sum);
-                stmt.executeUpdate();
-                try (ResultSet rs = stmt.getGeneratedKeys()) {
-                    if (rs.next()) {
-                        placedBetId = rs.getInt(1);
-                    } else {
-                        throw new Exception("Не вдалося отримати ID зробленої ставки.");
+                String userQuery = "SELECT id, wallet FROM users WHERE email = ?";
+                int userId;
+                BigDecimal currentWallet;
+                try (PreparedStatement userStmt = conn.prepareStatement(userQuery)) {
+                    userStmt.setString(1, email);
+                    try (ResultSet userRs = userStmt.executeQuery()) {
+                        if (userRs.next()) {
+                            userId = userRs.getInt("id");
+                            currentWallet = userRs.getBigDecimal("wallet");
+                        } else {
+                            response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                            response.getWriter().write("{\"error\": \"User not found\"}");
+                            return;
+                        }
                     }
                 }
+
+                if (currentWallet.compareTo(betSum) < 0) {
+                    response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+                    response.getWriter().write("{\"error\": \"Insufficient funds\"}");
+                    return;
+                }
+
+                String betQuery = "SELECT * FROM bets WHERE id = ?";
+                try (PreparedStatement betStmt = conn.prepareStatement(betQuery)) {
+                    betStmt.setInt(1, betId);
+                    try (ResultSet betRs = betStmt.executeQuery()) {
+                        if (!betRs.next()) {
+                            response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                            response.getWriter().write("{\"error\": \"Bet not found\"}");
+                            return;
+                        }
+                    }
+                }
+
+                String insertQuery = "INSERT INTO placed_bets (bet_id, user_id, state, sum, create_at) VALUES (?, ?, ?, ?, ?)";
+                try (PreparedStatement insertStmt = conn.prepareStatement(insertQuery)) {
+                    insertStmt.setInt(1, betId);
+                    insertStmt.setInt(2, userId);
+                    insertStmt.setString(3, "ACTIVE");
+                    insertStmt.setBigDecimal(4, betSum);
+                    insertStmt.setTimestamp(5, new Timestamp(System.currentTimeMillis()));
+                    int affectedRows = insertStmt.executeUpdate();
+                    if (affectedRows <= 0) {
+                        conn.rollback();
+                        response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+                        response.getWriter().write("{\"error\": \"Failed to place bet\"}");
+                        return;
+                    }
+                }
+
+                String updateQuery = "UPDATE users SET wallet = wallet - ? WHERE id = ?";
+                try (PreparedStatement updateStmt = conn.prepareStatement(updateQuery)) {
+                    updateStmt.setBigDecimal(1, betSum);
+                    updateStmt.setInt(2, userId);
+                    int updatedRows = updateStmt.executeUpdate();
+                    if (updatedRows <= 0) {
+                        conn.rollback();
+                        response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+                        response.getWriter().write("{\"error\": \"Failed to update wallet\"}");
+                        return;
+                    }
+                }
+
+                conn.commit();
+
+                response.setStatus(HttpServletResponse.SC_OK);
+                response.getWriter().write("{\"message\": \"Bet placed successfully\"}");
+            } catch (Exception e) {
+                e.printStackTrace();
+                response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+                response.getWriter().write("{\"error\": \"" + e.getMessage().replace("\"", "\\\"") + "\"}");
             }
-            JsonObject jsonResponse = new JsonObject();
-            jsonResponse.addProperty("success", true);
-            jsonResponse.addProperty("placedBetId", placedBetId);
-            response.getWriter().write(jsonResponse.toString());
         } catch (Exception e) {
             e.printStackTrace();
-            response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-            response.getWriter().write("{\"error\": \"Не вдалося зробити ставку: " + e.getMessage() + "\"}");
+            response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            response.getWriter().write("{\"error\": \"" + e.getMessage().replace("\"", "\\\"") + "\"}");
         }
     }
 }

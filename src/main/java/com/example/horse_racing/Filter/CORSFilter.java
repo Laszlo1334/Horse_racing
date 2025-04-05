@@ -9,12 +9,13 @@ import jakarta.servlet.ServletResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import jakarta.servlet.annotation.WebFilter;
 
+@WebFilter("/*")
 public class CORSFilter implements Filter {
 
     @Override
     public void init(FilterConfig filterConfig) throws ServletException {
-        // Ініціалізація фільтра (якщо необхідно)
     }
 
     @Override
@@ -39,6 +40,5 @@ public class CORSFilter implements Filter {
 
     @Override
     public void destroy() {
-        // Логіка очищення
     }
 }

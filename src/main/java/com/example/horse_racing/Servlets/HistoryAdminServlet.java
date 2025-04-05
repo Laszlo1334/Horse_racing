@@ -1,6 +1,6 @@
 package com.example.horse_racing.Servlets;
 
-import com.example.horse_racing.Models.BetListDto;
+import com.example.horse_racing.Models.HistoryAdmin;
 import com.example.horse_racing.Utils.DBUtil;
 import com.google.gson.Gson;
 import jakarta.servlet.ServletException;
@@ -13,12 +13,11 @@ import java.io.IOException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.List;
 
-@WebServlet(name = "ListOfBetsServlet", urlPatterns = "/list-bets")
-public class ListOfBetsServlet extends HttpServlet {
+@WebServlet(name = "HistoryAdminServlet", urlPatterns = "/admin-history")
+public class HistoryAdminServlet extends HttpServlet {
     @Override
     protected void doGet(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
         response.setContentType("application/json");
@@ -28,37 +27,29 @@ public class ListOfBetsServlet extends HttpServlet {
         response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
         response.setHeader("Access-Control-Allow-Credentials", "true");
 
-        List<BetListDto> bets = new ArrayList<>();
-        String query = "SELECT b.id AS bet_id, r.id AS race_id, r.start_time, r.end_time, r.location, " +
-                "h.id AS horse_id, h.name AS horse_name, h.age, h.breed, h.rider, " +
-                "b.multyplier, b.bet_type " +
-                "FROM bets b " +
-                "JOIN races r ON b.race_id = r.id " +
-                "JOIN horses h ON b.horses_id = h.id";
+        List<HistoryAdmin> historyList = new ArrayList<>();
+
+        String query = "SELECT pb.id AS placed_bet_id, b.id AS bet_id, pb.user_id, pb.sum, pb.state, b.multyplier, pb.create_at " +
+                "FROM placed_bets pb " +
+                "JOIN bets b ON pb.bet_id = b.id";
 
         try (Connection conn = DBUtil.getConnection();
              PreparedStatement stmt = conn.prepareStatement(query);
              ResultSet rs = stmt.executeQuery()) {
-            while (rs.next()) {
-                Timestamp startTime = rs.getTimestamp("start_time");
-                Timestamp endTime = rs.getTimestamp("end_time");
 
-                BetListDto bet = new BetListDto(
+            while (rs.next()) {
+                HistoryAdmin history = new HistoryAdmin(
+                        rs.getInt("placed_bet_id"),
                         rs.getInt("bet_id"),
-                        rs.getInt("race_id"),
-                        startTime,  // Повертаємо Timestamp
-                        endTime,    // Повертаємо Timestamp
-                        rs.getString("location"),
-                        rs.getInt("horse_id"),
-                        rs.getString("horse_name"),
-                        rs.getInt("age"),
-                        rs.getString("breed"),
-                        rs.getString("rider"),
+                        rs.getInt("user_id"),
+                        rs.getBigDecimal("sum"),
+                        rs.getString("state"),
                         rs.getBigDecimal("multyplier"),
-                        rs.getString("bet_type")
+                        rs.getTimestamp("create_at")
                 );
-                bets.add(bet);
+                historyList.add(history);
             }
+
         } catch (Exception e) {
             e.printStackTrace();
             response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
@@ -66,7 +57,7 @@ public class ListOfBetsServlet extends HttpServlet {
             return;
         }
 
-        String json = new Gson().toJson(bets);
+        String json = new Gson().toJson(historyList);
         response.getWriter().write(json);
     }
 }
