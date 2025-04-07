@@ -12,7 +12,9 @@ public class DBUtil {
     public static Connection getConnection() throws SQLException {
         try {
             Class.forName("org.postgresql.Driver");
+            System.out.println("DB Connection success!");
             return DriverManager.getConnection(URL, USER, PASSWORD);
+
         } catch (Exception e) {
             e.printStackTrace();
             return null;

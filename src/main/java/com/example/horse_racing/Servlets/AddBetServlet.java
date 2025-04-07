@@ -1,8 +1,8 @@
 package com.example.horse_racing.Servlets;
 
-import com.google.gson.Gson;
-import com.google.gson.JsonObject;
+import com.example.horse_racing.Models.AddBetRequest;
 import com.example.horse_racing.Utils.DBUtil;
+import com.google.gson.Gson;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.HttpServlet;
@@ -13,13 +13,11 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.Statement;
 
 @WebServlet(name = "AddBetServlet", urlPatterns = "/add-bet")
 public class AddBetServlet extends HttpServlet {
     @Override
-    protected void doPost(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException{
+    protected void doPost(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
         response.setContentType("application/json");
         response.setCharacterEncoding("UTF-8");
         response.setHeader("Access-Control-Allow-Origin", "http://localhost:3000");
@@ -28,47 +26,39 @@ public class AddBetServlet extends HttpServlet {
         response.setHeader("Access-Control-Allow-Credentials", "true");
 
         StringBuilder sb = new StringBuilder();
-        try (BufferedReader reader = request.getReader()){
+        try (BufferedReader reader = request.getReader()) {
             String line;
-            while ((line = reader.readLine()) != null) {
+            while((line = reader.readLine()) != null) {
                 sb.append(line);
             }
         }
+        AddBetRequest addBetRequest = new Gson().fromJson(sb.toString(), AddBetRequest.class);
+        if (addBetRequest == null) {
+            response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            response.getWriter().write("{\"error\":\"Invalid request data\"}");
+            return;
+        }
 
-        Gson gson = new Gson();
-        JsonObject json = gson.fromJson(sb.toString(), JsonObject.class);
-
-        int raceId = json.get("raceId").getAsInt();
-        int horsesId = json.get("horsesId").getAsInt();
-        int multyplier = json.get("multyplier").getAsInt();
-        String betType = json.get("betType").getAsString();
-
-        try (Connection conn = DBUtil.getConnection()){
-            String insertBetQuery = "INSERT INTO bets (race_id, horses_id, multyplier, bet_type, create_at) " +
-                    "VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)";
-            int betId;
-            try (PreparedStatement stmt = conn.prepareStatement(insertBetQuery, Statement.RETURN_GENERATED_KEYS)){
-                stmt.setInt(1, raceId);
-                stmt.setInt(2, horsesId);
-                stmt.setInt(3, multyplier);
-                stmt.setString(4, betType);
-                stmt.executeUpdate();
-                try (ResultSet rs = stmt.getGeneratedKeys()){
-                    if (rs.next()) {
-                        betId = rs.getInt(1);
-                    } else {
-                        throw new Exception("Не вдалося отримати ID ставки.");
-                    }
-                }
+        Connection conn = null;
+        try {
+            conn = DBUtil.getConnection();
+            String insertSQL = "INSERT INTO bets (race_id, horses_id, multyplier, bet_type, create_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)";
+            try (PreparedStatement ps = conn.prepareStatement(insertSQL)) {
+                ps.setInt(1, addBetRequest.getRaceId());
+                ps.setInt(2, addBetRequest.getHorseId());
+                ps.setBigDecimal(3, addBetRequest.getMultiplier());
+                ps.setString(4, addBetRequest.getBetType());
+                ps.executeUpdate();
             }
-            JsonObject jsonResponse = new JsonObject();
-            jsonResponse.addProperty("success", true);
-            jsonResponse.addProperty("betId", betId);
-            response.getWriter().write(jsonResponse.toString());
+            response.getWriter().write("{\"message\":\"Bet added successfully\"}");
         } catch (Exception e) {
             e.printStackTrace();
             response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-            response.getWriter().write("{\"error\": \"Не вдалося додати ставку: " + e.getMessage() + "\"}");
+            response.getWriter().write("{\"error\":\"" + e.getMessage().replace("\"", "\\\"") + "\"}");
+        } finally {
+            if(conn != null) {
+                try { conn.close(); } catch(Exception ex) { }
+            }
         }
     }
 }
